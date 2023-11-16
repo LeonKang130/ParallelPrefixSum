@@ -1,0 +1,9 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-3.26/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in
+C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-3.26/Modules/CMakePackageConfigHelpers.cmake
+C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-3.26/Modules/GNUInstallDirs.cmake
+C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-3.26/Modules/WriteBasicConfigVersionFile.cmake
+C:/Users/admin/Desktop/ParallelPrefixSum/extern/rang/CMakeLists.txt
+C:/Users/admin/Desktop/ParallelPrefixSum/extern/rang/cmake/CMakeUtilities.cmake
+C:/Users/admin/Desktop/ParallelPrefixSum/extern/rang/cmake/rang-config.cmake.in
+C:/Users/admin/Desktop/ParallelPrefixSum/extern/rang/cmake/rang.pc.in

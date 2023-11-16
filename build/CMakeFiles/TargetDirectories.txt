@@ -1,0 +1,15 @@
+C:/Users/admin/Desktop/ParallelPrefixSum/build/CMakeFiles/main.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/CMakeFiles/INSTALL.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/CMakeFiles/ZERO_CHECK.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/rang/CMakeFiles/INSTALL.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/rang/CMakeFiles/ALL_BUILD.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glad/CMakeFiles/glad.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glad/CMakeFiles/INSTALL.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glad/CMakeFiles/ALL_BUILD.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/CMakeFiles/uninstall.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/CMakeFiles/INSTALL.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/CMakeFiles/ALL_BUILD.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/src/CMakeFiles/glfw.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/src/CMakeFiles/update_mappings.dir
+C:/Users/admin/Desktop/ParallelPrefixSum/build/extern/glfw/src/CMakeFiles/INSTALL.dir

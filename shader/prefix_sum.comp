@@ -1,0 +1,113 @@
+#version 460
+#extension GL_ARB_shader_group_vote : require
+
+#define STATUS_X 0
+#define STATUS_A 1
+#define STATUS_P 2
+#define STATUS_FLAG_LEN 2
+#define STATUS_FLAG_MASK 3
+
+#define THREADS_PER_WARP 32
+#define WARPS_PER_BLOCK 32
+#define THREADS_PER_BLOCK (THREADS_PER_WARP * WARPS_PER_BLOCK)
+#define ELEMENTS_PER_THREAD 2
+#define ELEMENTS_PER_WARP (ELEMENTS_PER_THREAD * THREADS_PER_WARP)
+#define ELEMENTS_PER_BLOCK (ELEMENTS_PER_WARP * WARPS_PER_BLOCK)
+
+layout(std430, binding = 0) restrict readonly buffer InputBuffer {
+    int input_data[];
+};
+
+layout(std430, binding = 1) restrict coherent buffer OutputBuffer {
+    int output_data[];
+};
+
+layout(local_size_x = THREADS_PER_BLOCK, local_size_y = 1, local_size_z = 1) in;
+
+shared int warp_level[WARPS_PER_BLOCK][ELEMENTS_PER_WARP];
+shared int block_level[WARPS_PER_BLOCK];
+
+void main() {
+    int thread_index = int(gl_LocalInvocationID.x) % THREADS_PER_WARP;
+    int warp_index = int(gl_LocalInvocationID.x) / THREADS_PER_WARP;
+    int block_index = int(gl_GlobalInvocationID.x) / THREADS_PER_BLOCK;
+    int current_warp_offset = block_index * ELEMENTS_PER_BLOCK + warp_index * ELEMENTS_PER_WARP;
+    int reg1 = input_data[current_warp_offset + thread_index];
+    int reg2 = input_data[current_warp_offset + THREADS_PER_WARP + thread_index];
+    warp_level[warp_index][thread_index] = reg1;
+    warp_level[warp_index][THREADS_PER_WARP + thread_index] = reg2;
+    // warp level prefix sum
+    int offset = 1;
+    for (int d = THREADS_PER_WARP; d != 0; d >>= 1) {
+        if (thread_index < d) {
+            int ai = offset * (2 * thread_index + 1) - 1;
+            int bi = offset * (2 * thread_index + 2) - 1;
+            warp_level[warp_index][bi] += warp_level[warp_index][ai];
+        }
+        offset <<= 1;
+    }
+    if (thread_index == 0) warp_level[warp_index][ELEMENTS_PER_WARP - 1] = 0;
+    for (uint d = 1; d <= THREADS_PER_WARP; d <<= 1) {
+        offset >>= 1;
+        if (thread_index < d) {
+            int ai = offset * (2 * thread_index + 1) - 1;
+            int bi = offset * (2 * thread_index + 2) - 1;
+            int t = warp_level[warp_index][ai];
+            warp_level[warp_index][ai] = warp_level[warp_index][bi];
+            warp_level[warp_index][bi] += t;
+        }
+    }
+    warp_level[warp_index][thread_index] += reg1;
+    warp_level[warp_index][THREADS_PER_WARP + thread_index] += reg2;
+    block_level[warp_index] = warp_level[warp_index][ELEMENTS_PER_WARP - 1];
+    // block level prefix sum
+    memoryBarrierShared();
+    barrier();
+    for (int d = WARPS_PER_BLOCK >> 1; d != 0; d >>= 1) {
+        if (thread_index == 0 && warp_index < d) {
+            int ai = offset * (2 * warp_index + 1) - 1;
+            int bi = offset * (2 * warp_index + 2) - 1;
+            block_level[bi] += block_level[ai];
+        }
+        offset <<= 1;
+        memoryBarrierShared();
+        barrier();
+    }
+    if (warp_index == 0 && thread_index == 0) block_level[WARPS_PER_BLOCK - 1] = 0;
+    memoryBarrierShared();
+    barrier();
+    for (int d = 1; d <= WARPS_PER_BLOCK >> 1; d <<= 1) {
+        offset >>= 1;
+        if (thread_index == 0 && warp_index < d) {
+            int ai = offset * (2 * warp_index + 1) - 1;
+            int bi = offset * (2 * warp_index + 2) - 1;
+            int t = block_level[ai];
+            block_level[ai] = block_level[bi];
+            block_level[bi] += t;
+        }
+        memoryBarrierShared();
+        barrier();
+    }
+    warp_level[warp_index][thread_index] += block_level[warp_index];
+    warp_level[warp_index][THREADS_PER_WARP + thread_index] += block_level[warp_index];
+    // write to global memory
+    atomicExchange(output_data[current_warp_offset + thread_index], (warp_level[warp_index][thread_index] << STATUS_FLAG_LEN) | STATUS_A);
+    atomicExchange(output_data[current_warp_offset + THREADS_PER_WARP + thread_index], (warp_level[warp_index][THREADS_PER_WARP + thread_index] << STATUS_FLAG_LEN) | STATUS_A);
+    // decoupled look-back
+    int block_prefix_sum = 0;
+    for (int probe_location = block_index * ELEMENTS_PER_BLOCK - 1; probe_location != -1; probe_location -= ELEMENTS_PER_BLOCK) {
+        int probe_result, status_flag;
+        probe_result = output_data[probe_location];
+        status_flag = probe_result & STATUS_FLAG_MASK;
+        while (status_flag == STATUS_X) {
+            probe_result = output_data[probe_location];
+            status_flag = probe_result & STATUS_FLAG_MASK;
+        }
+        block_prefix_sum += probe_result >> STATUS_FLAG_LEN;
+        if (status_flag == STATUS_P) {
+            break;
+        }
+    }
+    atomicExchange(output_data[current_warp_offset + thread_index], ((warp_level[warp_index][thread_index] + block_prefix_sum) << STATUS_FLAG_LEN) | STATUS_P);
+    atomicExchange(output_data[current_warp_offset + THREADS_PER_WARP + thread_index], ((warp_level[warp_index][THREADS_PER_WARP + thread_index] + block_prefix_sum) << STATUS_FLAG_LEN) | STATUS_P);
+}
