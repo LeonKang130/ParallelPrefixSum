@@ -1,8 +1,0 @@
-prefix=C:/Program Files (x86)/ParallelPrefixSum
-exec_prefix=C:/Program Files (x86)/ParallelPrefixSum
-includedir=${prefix}/include
-
-Name: rang
-Description: A Minimal, Header only Modern c++ library for terminal goodies
-Version: 3.2.0
-Cflags: -I${includedir}

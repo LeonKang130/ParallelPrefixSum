@@ -77,7 +77,6 @@ int main() {
     GLuint cleanUpProgram = CreateComputeProgram("shader/clean_up.comp");
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
     glBeginQuery(GL_TIME_ELAPSED, query);
-
     glUseProgram(prefixSumProgram);
     glDispatchCompute(NUM_BINS / (32 * 32 * 2), 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -85,12 +84,11 @@ int main() {
     glDispatchCompute(NUM_BINS / (32 * 32 * 16), 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     glEndQuery(GL_TIME_ELAPSED);
-
+    glCopyNamedBufferSubData(outputBuffer, downloadBuffer, 0, 0, NUM_BINS * sizeof(int));
     GLuint timeElapsed;
     glGetQueryObjectuiv(query, GL_QUERY_RESULT, &timeElapsed);
     std::cout << rang::fg::yellow << "[Perf]" << rang::fg::reset << " " << timeElapsed / 1e6f << "ms" << std::endl;
     glDeleteQueries(1, &query);
-    glCopyNamedBufferSubData(outputBuffer, downloadBuffer, 0, 0, NUM_BINS * sizeof(int));
     inputData = reinterpret_cast<int*>(glMapNamedBufferRange(uploadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_READ_BIT));
     int* outputData = reinterpret_cast<int*>(glMapNamedBufferRange(downloadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_READ_BIT));
     int prefixSum = 0;
