@@ -1,5 +1,6 @@
 #version 460 core
-#extension GL_ARB_shader_ballot : require
+#extension GL_ARB_shader_ballot : enable
+#extension GL_NV_shader_thread_shuffle : enable
 
 #define STATUS_X 0
 #define STATUS_B 1 // block-level aggregate ready
@@ -18,7 +19,7 @@ layout(binding = 0) restrict readonly buffer InputBuffer {
     int input_data[];
 };
 
-layout(binding = 1) restrict buffer OutputBuffer {
+layout(binding = 1) restrict volatile buffer OutputBuffer {
     int output_data[];
 };
 
@@ -58,7 +59,7 @@ void main() {
     warp_level[warp_index][thread_index] += reg1;
     warp_level[warp_index][THREADS_PER_WARP + thread_index] += reg2;
     if (thread_index == 0) block_level[warp_index] = warp_level[warp_index][ELEMENTS_PER_WARP - 1];
-    memoryBarrierShared();
+    groupMemoryBarrier();
     barrier();
     if (warp_index == 0) {
         // block level prefix sum
@@ -86,28 +87,25 @@ void main() {
         for (int probe_block = block_index - 1; probe_block != -1; probe_block--) {
             int status_flag;
             for (int probe_warp = WARPS_PER_BLOCK - 1; probe_warp != -1; probe_warp--) {
-                if (thread_index == 0) {
-                    int probe_location = probe_block * ELEMENTS_PER_BLOCK + (probe_warp + 1) * ELEMENTS_PER_WARP - 1;
-                    int probe_result = output_data[probe_location];
-                    status_flag = probe_result & STATUS_FLAG_MASK;
-                    if (status_flag != STATUS_X) block_prefix_sum += probe_result >> STATUS_FLAG_LEN;   
+                int probe_location = probe_block * ELEMENTS_PER_BLOCK + (probe_warp + 1) * ELEMENTS_PER_WARP - 1;
+                int probe_result = output_data[probe_location];
+                status_flag = probe_result & STATUS_FLAG_MASK;
+                if (status_flag != STATUS_X) {
+                    block_prefix_sum += probe_result >> STATUS_FLAG_LEN;
+                    break;
                 }
-                status_flag = readFirstInvocationARB(status_flag);
-                if (status_flag != STATUS_X) break;
                 // no __nanosleep in glsl
                 // compute the sum of elements within the probed warp instead of polling(blocking)
-                int probe_location = probe_block * ELEMENTS_PER_BLOCK + probe_warp * ELEMENTS_PER_WARP + thread_index;
+                probe_location = probe_block * ELEMENTS_PER_BLOCK + probe_warp * ELEMENTS_PER_WARP + thread_index;
                 int reg4 = input_data[probe_location] + input_data[THREADS_PER_WARP + probe_location];
-                for (int d = THREADS_PER_BLOCK >> 1; d != 0; d >>= 1) {
-                    if (thread_index < d) {
-                        reg4 += readInvocationARB(reg4, thread_index + d);
-                    }
+                for (int d = THREADS_PER_WARP >> 1; d != 0; d >>= 1) {
+                    int reg5 = shuffleXorNV(reg4, d, THREADS_PER_WARP);
+                    reg4 += reg5;
                 }
                 block_prefix_sum += reg4;
             }
             if (status_flag == STATUS_G) break;
         }
-        block_prefix_sum = readFirstInvocationARB(block_prefix_sum);
         for (int current_warp = 0; current_warp < WARPS_PER_BLOCK; current_warp++) {
             int warp_prefix_sum = readInvocationARB(reg3, current_warp);
             output_data[current_block_offset + current_warp * ELEMENTS_PER_WARP + thread_index] =

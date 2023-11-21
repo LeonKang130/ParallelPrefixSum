@@ -67,7 +67,7 @@ int main() {
     // Write input data to input buffer
     int* inputData = reinterpret_cast<int*>(glMapNamedBufferRange(uploadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_WRITE_BIT));
     for (int i = 0; i < NUM_BINS; i++) {
-        inputData[i] = 1;
+        inputData[i] = ((i << 12 | i >> 20) ^ i) & 15;
     }
     glUnmapNamedBuffer(uploadBuffer);
     glCopyNamedBufferSubData(uploadBuffer, inputBuffer, 0, 0, NUM_BINS * sizeof(int));
