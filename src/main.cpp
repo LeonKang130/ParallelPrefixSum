@@ -3,13 +3,15 @@
 #include <array>
 #include <string>
 #include <stdexcept>
+#include <cstdlib>
 
 #include <rang.hpp>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#define NUM_ENTRIES (32 * 1024 * 1024)
 #define MINIMUM_BINS (16 * 1024)
-#define NUM_BINS (16 * 1024 * 1024)
+#define NUM_BINS (1024 * 1024)
 
 GLuint CreateComputeProgram(const char* filename) {
     std::fstream fstream;
@@ -56,21 +58,18 @@ int main() {
     // Allocate buffers for photon emitting, sorting and collecting
     GLuint uploadBuffer; glCreateBuffers(1, &uploadBuffer);
     glNamedBufferStorage(uploadBuffer, NUM_BINS * sizeof(int), nullptr, GL_MAP_WRITE_BIT | GL_MAP_READ_BIT | GL_MAP_COHERENT_BIT | GL_MAP_PERSISTENT_BIT);
-    GLuint inputBuffer; glCreateBuffers(1, &inputBuffer);
-    glNamedBufferStorage(inputBuffer, NUM_BINS * sizeof(int), nullptr, GL_DYNAMIC_STORAGE_BIT);
-    GLuint outputBuffer; glCreateBuffers(1, &outputBuffer);
-    glNamedBufferStorage(outputBuffer, NUM_BINS * sizeof(int), nullptr, GL_DYNAMIC_STORAGE_BIT);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, inputBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, outputBuffer);
+    GLuint elementBuffer; glCreateBuffers(1, &elementBuffer);
+    glNamedBufferStorage(elementBuffer, NUM_BINS * sizeof(int), nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, elementBuffer);
     GLuint downloadBuffer; glCreateBuffers(1, &downloadBuffer);
     glNamedBufferStorage(downloadBuffer, NUM_BINS * sizeof(int), nullptr, GL_MAP_READ_BIT | GL_DYNAMIC_STORAGE_BIT | GL_MAP_COHERENT_BIT | GL_MAP_PERSISTENT_BIT);
     // Write input data to input buffer
     int* inputData = reinterpret_cast<int*>(glMapNamedBufferRange(uploadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_WRITE_BIT));
-    for (int i = 0; i < NUM_BINS; i++) {
-        inputData[i] = ((i << 12 | i >> 20) ^ i) & 15;
+    for (int i = 0; i < NUM_ENTRIES; i++) {
+        inputData[rand() % NUM_BINS] += 4;
     }
     glUnmapNamedBuffer(uploadBuffer);
-    glCopyNamedBufferSubData(uploadBuffer, inputBuffer, 0, 0, NUM_BINS * sizeof(int));
+    glCopyNamedBufferSubData(uploadBuffer, elementBuffer, 0, 0, NUM_BINS * sizeof(int));
     // Create query object
     GLuint query; glCreateQueries(GL_TIME_ELAPSED, 1, &query);
     GLuint prefixSumProgram = CreateComputeProgram("shader/prefix_sum.comp");
@@ -80,16 +79,16 @@ int main() {
     glUseProgram(prefixSumProgram);
     glDispatchCompute(NUM_BINS / (32 * 32 * 2), 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    glEndQuery(GL_TIME_ELAPSED);
     glUseProgram(cleanUpProgram);
     glDispatchCompute(NUM_BINS / (32 * 32 * 32), 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    glEndQuery(GL_TIME_ELAPSED);
-    glCopyNamedBufferSubData(outputBuffer, downloadBuffer, 0, 0, NUM_BINS * sizeof(int));
+    glCopyNamedBufferSubData(elementBuffer, downloadBuffer, 0, 0, NUM_BINS * sizeof(int));
     inputData = reinterpret_cast<int*>(glMapNamedBufferRange(uploadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_READ_BIT));
     int* outputData = reinterpret_cast<int*>(glMapNamedBufferRange(downloadBuffer, 0, NUM_BINS * sizeof(int), GL_MAP_READ_BIT));
     int prefixSum = 0;
     for (int i = 0; i < NUM_BINS; i++) {
-        prefixSum += inputData[i];
+        prefixSum += inputData[i] >> 2;
         if (prefixSum != outputData[i]) {
             std::cout << rang::fg::red << "[Error] " << rang::fg::reset << " Wrong answer at " << i << ": " << prefixSum << ", " << outputData[i] << std::endl;
             break;
@@ -105,8 +104,7 @@ int main() {
     glDeleteProgram(cleanUpProgram);
     glDeleteBuffers(1, &uploadBuffer);
     glDeleteBuffers(1, &downloadBuffer);
-    glDeleteBuffers(1, &inputBuffer);
-    glDeleteBuffers(1, &outputBuffer);
+    glDeleteBuffers(1, &elementBuffer);
     glfwDestroyWindow(window);
     glfwTerminate();
 }

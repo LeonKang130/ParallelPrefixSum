@@ -1,6 +1,8 @@
 #version 460 core
 #extension GL_ARB_shader_ballot : enable
+#extension GL_ARB_shader_group_vote : enable
 #extension GL_NV_shader_thread_shuffle : enable
+#extension GL_NV_shader_thread_group : enable
 
 #define STATUS_X 0
 #define STATUS_B 1 // block-level aggregate ready
@@ -15,12 +17,8 @@
 #define ELEMENTS_PER_WARP (ELEMENTS_PER_THREAD * THREADS_PER_WARP)
 #define ELEMENTS_PER_BLOCK (ELEMENTS_PER_WARP * WARPS_PER_BLOCK)
 
-layout(binding = 0) restrict readonly buffer InputBuffer {
-    int input_data[];
-};
-
-layout(binding = 1) restrict volatile buffer OutputBuffer {
-    int output_data[];
+layout(binding = 0) buffer ElementBuffer {
+    int elements[];
 };
 
 layout(local_size_x = THREADS_PER_BLOCK, local_size_y = 1, local_size_z = 1) in;
@@ -35,10 +33,12 @@ void main() {
     int current_block_offset = block_index * ELEMENTS_PER_BLOCK;
     int current_warp_offset = current_block_offset + warp_index * ELEMENTS_PER_WARP;
     // write into shared memory, reg1 and reg2 are saved for later usage
-    int reg1 = input_data[current_warp_offset + thread_index], reg2 = input_data[current_warp_offset + THREADS_PER_WARP + thread_index];
+    int reg1 = elements[current_warp_offset + thread_index] >> STATUS_FLAG_LEN;
+    int reg2 = elements[current_warp_offset + THREADS_PER_WARP + thread_index] >> STATUS_FLAG_LEN;
     warp_level[warp_index][thread_index] = reg1, warp_level[warp_index][THREADS_PER_WARP + thread_index] = reg2;
     // warp level prefix sum
     int offset = 0;
+    #pragma unroll
     for (int d = THREADS_PER_WARP; d != 0; d >>= 1) {
         if (thread_index < d) {
             int ai = ((thread_index << 1 | 1) << offset) - 1, bi = (thread_index + 1 << offset + 1) - 1;
@@ -47,7 +47,8 @@ void main() {
         offset++;
     }
     if (thread_index == 0) warp_level[warp_index][ELEMENTS_PER_WARP - 1] = 0;
-    for (uint d = 1; d <= THREADS_PER_WARP; d <<= 1) {
+    #pragma unroll
+    for (int d = 1; d <= THREADS_PER_WARP; d <<= 1) {
         offset--;
         if (thread_index < d) {
             int ai = ((thread_index << 1 | 1) << offset) - 1, bi = (thread_index + 1 << offset + 1) - 1;
@@ -59,10 +60,11 @@ void main() {
     warp_level[warp_index][thread_index] += reg1;
     warp_level[warp_index][THREADS_PER_WARP + thread_index] += reg2;
     if (thread_index == 0) block_level[warp_index] = warp_level[warp_index][ELEMENTS_PER_WARP - 1];
-    groupMemoryBarrier();
+    memoryBarrierShared();
     barrier();
     if (warp_index == 0) {
         // block level prefix sum
+        #pragma unroll
         for (int d = WARPS_PER_BLOCK >> 1; d != 0; d >>= 1) {
             if (thread_index < d) {
                 int ai = ((thread_index << 1 | 1) << offset) - 1, bi = (thread_index + 1 << offset + 1) - 1;
@@ -71,6 +73,7 @@ void main() {
             offset++;
         }
         if (thread_index == 0) block_level[WARPS_PER_BLOCK - 1] = 0;
+        #pragma unroll
         for (int d = 1; d <= WARPS_PER_BLOCK >> 1; d <<= 1) {
             offset--;
             if (thread_index < d) {
@@ -81,37 +84,35 @@ void main() {
             }
         }
         int reg3 = block_level[thread_index];
-        output_data[current_block_offset + (thread_index + 1) * ELEMENTS_PER_WARP - 1] = (warp_level[thread_index][ELEMENTS_PER_WARP - 1] + reg3) << STATUS_FLAG_LEN | STATUS_B;
+        elements[current_block_offset + (thread_index + 1) * ELEMENTS_PER_WARP - 1] = (warp_level[thread_index][ELEMENTS_PER_WARP - 1] + reg3) << STATUS_FLAG_LEN | STATUS_B;
         // grid level prefix sum
         int block_prefix_sum = 0;
         for (int probe_block = block_index - 1; probe_block != -1; probe_block--) {
-            int status_flag;
-            for (int probe_warp = WARPS_PER_BLOCK - 1; probe_warp != -1; probe_warp--) {
-                int probe_location = probe_block * ELEMENTS_PER_BLOCK + (probe_warp + 1) * ELEMENTS_PER_WARP - 1;
-                int probe_result = output_data[probe_location];
-                status_flag = probe_result & STATUS_FLAG_MASK;
-                if (status_flag != STATUS_X) {
-                    block_prefix_sum += probe_result >> STATUS_FLAG_LEN;
-                    break;
+            int status_flag = STATUS_X; uint status_mask = 0;
+            int probe_block_offset = probe_block * ELEMENTS_PER_BLOCK;
+            int probe_index = probe_block_offset + ELEMENTS_PER_BLOCK - THREADS_PER_WARP + thread_index;
+            int reg4, reg5, reduction_offset;
+            while (status_flag == STATUS_X && probe_index >= probe_block_offset) {
+                reg4 = elements[probe_index];
+                status_flag = reg4 & STATUS_FLAG_MASK; reg4 >>= STATUS_FLAG_LEN;
+                status_mask = ballotThreadNV(status_flag != STATUS_X);
+                reduction_offset = status_mask == 0 ? 0 : findMSB(status_mask);
+                for (int d = (THREADS_PER_WARP - reduction_offset) >> 1; d != 0; d >>= 1) {
+                    bool within_warp;
+                    reg5 = shuffleDownNV(reg4, d, THREADS_PER_WARP, within_warp);
+                    if (thread_index < reduction_offset + d && within_warp) reg4 = reg4 + reg5;
                 }
-                // no __nanosleep in glsl
-                // compute the sum of elements within the probed warp instead of polling(blocking)
-                probe_location = probe_block * ELEMENTS_PER_BLOCK + probe_warp * ELEMENTS_PER_WARP + thread_index;
-                int reg4 = input_data[probe_location] + input_data[THREADS_PER_WARP + probe_location];
-                for (int d = THREADS_PER_WARP >> 1; d != 0; d >>= 1) {
-                    int reg5 = shuffleXorNV(reg4, d, THREADS_PER_WARP);
-                    reg4 += reg5;
-                }
-                block_prefix_sum += reg4;
+                block_prefix_sum += readInvocationARB(reg4, reduction_offset);
+                probe_index -= THREADS_PER_WARP;
+                status_flag = readInvocationARB(status_flag, reduction_offset);
             }
             if (status_flag == STATUS_G) break;
         }
+        #pragma unroll
         for (int current_warp = 0; current_warp < WARPS_PER_BLOCK; current_warp++) {
             int warp_prefix_sum = readInvocationARB(reg3, current_warp);
-            output_data[current_block_offset + current_warp * ELEMENTS_PER_WARP + thread_index] =
-                (warp_level[current_warp][thread_index] + block_prefix_sum + warp_prefix_sum) << STATUS_FLAG_LEN | STATUS_G;
-            output_data[current_block_offset + current_warp * ELEMENTS_PER_WARP + THREADS_PER_WARP + thread_index] = 
-                (warp_level[current_warp][THREADS_PER_WARP + thread_index]  + block_prefix_sum + warp_prefix_sum) << STATUS_FLAG_LEN | STATUS_G;
+            elements[current_block_offset + current_warp * ELEMENTS_PER_WARP + thread_index] = (warp_level[current_warp][thread_index] + block_prefix_sum + warp_prefix_sum) << STATUS_FLAG_LEN | STATUS_G;
+            elements[current_block_offset + current_warp * ELEMENTS_PER_WARP + THREADS_PER_WARP + thread_index] = (warp_level[current_warp][THREADS_PER_WARP + thread_index] + block_prefix_sum + warp_prefix_sum) << STATUS_FLAG_LEN | STATUS_G;
         }
     }
 }

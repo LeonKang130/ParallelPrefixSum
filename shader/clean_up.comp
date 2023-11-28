@@ -9,8 +9,8 @@
 #define ELEMENTS_PER_WARP (ELEMENTS_PER_THREAD * THREADS_PER_WARP)
 #define ELEMENTS_PER_BLOCK (ELEMENTS_PER_WARP * WARPS_PER_BLOCK)
 
-layout(std430, binding = 1) buffer InoutBuffer {
-    int inout_data[];
+layout(std430, binding = 0) buffer ElementBuffer {
+    int elements[];
 };
 
 layout(local_size_x = THREADS_PER_BLOCK, local_size_y = 1, local_size_z = 1) in;
@@ -21,6 +21,6 @@ void main() {
     int block_index = int(gl_GlobalInvocationID.x) / THREADS_PER_BLOCK;
     int current_warp_offset = block_index * ELEMENTS_PER_BLOCK + warp_index * ELEMENTS_PER_WARP;
     for (int i = current_warp_offset; i != current_warp_offset + ELEMENTS_PER_WARP; i += THREADS_PER_WARP) {
-        inout_data[i + thread_index] = inout_data[i + thread_index] >> STATUS_FLAG_LEN;
+        elements[i + thread_index] = elements[i + thread_index] >> STATUS_FLAG_LEN;
     }
 }
